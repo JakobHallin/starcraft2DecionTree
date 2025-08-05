@@ -65,6 +65,7 @@ class DecisionTree(BotAI):
             await best_node.action_func()
         else:
             print("No valid actions found.")
+        
 
         
     async def setgame_state(self):
@@ -77,15 +78,25 @@ class DecisionTree(BotAI):
     
     #condions
     def is_supply_blocked(self, gs):
-        return gs['supply_left'] <= 2
+        supply_depots_in_progress = self.already_pending(UnitTypeId.SUPPLYDEPOT)
+        return gs['supply_left'] <= 2 and supply_depots_in_progress == 0
+
 
     def near_supply_cap(self, gs):
-        return gs['supply_total'] >= 180 and gs['minerals'] >= 100
+        return gs['supply_left'] >= 7 and gs['minerals'] >= 200
+        #return gs['supply_total'] >= 180 and gs['minerals'] >= 100
 
     def need_more_workers(self, gs):
-        return gs['workers'] < 16
+        return gs['workers'] < 22
     def first_barack(self, gs):
-        return not gs['barracks_built']
+
+        # Check if we have at least one supply depot built
+        supply_depot_ready = self.structures(UnitTypeId.SUPPLYDEPOT).ready.exists
+        # Cheack so we are not building a barrack already
+        barracks_in_progress = self.already_pending(UnitTypeId.BARRACKS)
+        return not gs['barracks_built'] and supply_depot_ready and barracks_in_progress == 0
+
+    
     
     # ----- Action Functions -----
     async def build_supply_depot(self):
@@ -147,7 +158,7 @@ class DecisionTree(BotAI):
             "Build First Barack",
             partial(self.first_barack),
             self.build_barack,
-            weight=80
+            weight=90
         )
 
         self.root_node.add_child(supply_blocked_node)
