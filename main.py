@@ -4,6 +4,39 @@ from sc2.data import Race, Difficulty
 from sc2.main import run_game
 from sc2.player import Bot, Computer
 
+from sc2.ids.unit_typeid import UnitTypeId
+
+from functools import partial
+
+# Decision Node Class
+class DecisionNode:
+    def __init__(self, name, condition_func=None, action_func=None, weight=0):
+        self.name = name
+        self.condition_func = condition_func
+        self.action_func = action_func
+        self.weight = weight
+        self.children = []
+
+    def add_child(self, node):
+        self.children.append(node)
+
+    def evaluate(self, game_state):
+        best_node = None
+        best_weight = -1
+
+        if self.action_func and (self.condition_func is None or self.condition_func(game_state)):
+            best_node = self
+            best_weight = self.weight
+
+        for child in self.children:
+            evaluated_node, evaluated_weight = child.evaluate(game_state)
+            if evaluated_weight > best_weight:
+                best_node = evaluated_node
+                best_weight = evaluated_weight
+
+        return best_node, best_weight
+
+
 class DecisionTree(BotAI):
     def __init__(self):
         self.game_state = {
@@ -16,14 +49,23 @@ class DecisionTree(BotAI):
             #'our_army_value': 100,
             #'enemy_army_value': 80,
             }
+        self.root_node = None  
 
     async def on_start(self):
         self.client.game_step = 1
+        self.build_decision_tree()
         
     async def on_step(self, iteration):
-         print(f"Step {iteration}")
-         self.game_state = await self.setgame_state()
-         print(f"Game State: {self.game_state}")
+        print(f"Step {iteration}")
+        self.game_state = await self.setgame_state()
+        print(f"Game State: {self.game_state}")
+        best_node, best_weight = self.root_node.evaluate(self.game_state)
+        if best_node:
+            print(f"[Decision]: {best_node.name} (Weight: {best_weight})")
+            await best_node.action_func()
+        else:
+            print("No valid actions found.")
+
         
     async def setgame_state(self):
         self.game_state['supply_left'] = self.supply_left
@@ -31,6 +73,68 @@ class DecisionTree(BotAI):
         self.game_state['workers'] = self.workers.amount
         self.game_state['minerals'] = self.minerals
         return self.game_state
+    
+    #condions
+    def is_supply_blocked(self, gs):
+        return gs['supply_left'] <= 2
+
+    def near_supply_cap(self, gs):
+        return gs['supply_total'] >= 180 and gs['minerals'] >= 100
+
+    def need_more_workers(self, gs):
+        return gs['workers'] < 16
+    
+    # ----- Action Functions -----
+    async def build_supply_depot(self):
+        if self.can_afford(UnitTypeId.SUPPLYDEPOT):
+            location = await self.get_build_location(UnitTypeId.SUPPLYDEPOT)
+            if location:
+                await self.build(UnitTypeId.SUPPLYDEPOT, location)
+                print("Building Supply Depot")
+
+    async def build_worker(self):
+        if self.can_afford(UnitTypeId.SCV):
+            for cc in self.townhalls.ready.idle:
+                cc.train(UnitTypeId.SCV)
+                print("Training SCV")
+                break
+     # Helper for finding build location
+    async def get_build_location(self, structure):
+        placement_positions = await self.find_placement(structure, near=self.start_location)
+        return placement_positions
+    
+    
+    # ----- Build the Decision Tree -----
+    def build_decision_tree(self):
+        self.root_node = DecisionNode("Game Start")
+
+        # Define the decision nodes and their actions
+        supply_blocked_node = DecisionNode(
+            "Supply Blocked?",
+            partial(self.is_supply_blocked),
+            self.build_supply_depot,
+            weight=100
+        )
+        
+        proactive_supply_node = DecisionNode(
+            "Proactively Build Supply Depot",
+            partial(self.near_supply_cap),
+            self.build_supply_depot,
+            weight=70
+        )
+
+        build_worker_node = DecisionNode(
+            "Build Worker",
+            partial(self.need_more_workers),
+            self.build_worker,
+            weight=80
+        )
+
+        self.root_node.add_child(supply_blocked_node)
+        self.root_node.add_child(proactive_supply_node)
+        self.root_node.add_child(build_worker_node)
+
+
 
 def main():
     run_game(
