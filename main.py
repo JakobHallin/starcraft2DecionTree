@@ -44,7 +44,7 @@ class DecisionTree(BotAI):
             'supply_total': 0,
             'workers': 0,
             'minerals': 0,   
-            #'barracks_built': False,
+            'barracks_built': False,
             #'enemy_near_base': False,
             #'our_army_value': 100,
             #'enemy_army_value': 80,
@@ -72,6 +72,7 @@ class DecisionTree(BotAI):
         self.game_state['supply_total'] = self.supply_cap
         self.game_state['workers'] = self.workers.amount
         self.game_state['minerals'] = self.minerals
+        self.game_state['barracks_built'] = self.structures(UnitTypeId.BARRACKS).ready.exists
         return self.game_state
     
     #condions
@@ -83,6 +84,8 @@ class DecisionTree(BotAI):
 
     def need_more_workers(self, gs):
         return gs['workers'] < 16
+    def first_barack(self, gs):
+        return not gs['barracks_built']
     
     # ----- Action Functions -----
     async def build_supply_depot(self):
@@ -98,10 +101,21 @@ class DecisionTree(BotAI):
                 cc.train(UnitTypeId.SCV)
                 print("Training SCV")
                 break
+
+    async def build_barack(self):
+        if self.structures(UnitTypeId.SUPPLYDEPOT).ready.amount >= 1:
+            if self.can_afford(UnitTypeId.BARRACKS):
+                location = await self.get_build_location(UnitTypeId.BARRACKS)
+                if location:
+                    await self.build(UnitTypeId.BARRACKS, location)
+                    print("Building Barracks")
+
      # Helper for finding build location
     async def get_build_location(self, structure):
         placement_positions = await self.find_placement(structure, near=self.start_location)
         return placement_positions
+    
+
     
     
     # ----- Build the Decision Tree -----
@@ -129,10 +143,17 @@ class DecisionTree(BotAI):
             self.build_worker,
             weight=80
         )
+        build_firstbarack_node = DecisionNode(
+            "Build First Barack",
+            partial(self.first_barack),
+            self.build_barack,
+            weight=80
+        )
 
         self.root_node.add_child(supply_blocked_node)
         self.root_node.add_child(proactive_supply_node)
         self.root_node.add_child(build_worker_node)
+        self.root_node.add_child(build_firstbarack_node)
 
 
 
